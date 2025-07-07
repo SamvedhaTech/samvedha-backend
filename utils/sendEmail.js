@@ -48,7 +48,7 @@ const sendInteractiveEmail = async ({
       break;
     case 'payment-success':
       subject = `Payment Successful - Your Ticket #${ticketNumber}`;
-      html = getPaymentSuccessTemplate(name, amount, paymentMethodText, ticketNumber, paymentId, formattedDate, formattedTime);
+      html = getPaymentSuccessTemplate(name, amount, paymentMethodText, ticketNumber, paymentId, formattedDate, formattedTime,receiptUrl);
       break;
     case 'payment-confirmation':
       subject = `Payment Confirmed - Your Ticket #${ticketNumber}`;
@@ -131,7 +131,7 @@ const getPaymentInitiatedTemplate = (name, amount, paymentMethod, ticketNumber, 
   `;
 };
 
-const getPaymentSuccessTemplate = (name, amount, paymentMethod, ticketNumber, paymentId, date, time) => {
+const getPaymentSuccessTemplate = (name, amount, paymentMethod, ticketNumber, paymentId, date, time,receiptUrl) => {
   return `
     <!DOCTYPE html>
     <html>
@@ -428,7 +428,7 @@ const getSupportInfo = () => `
 
 const getEmailFooter = () => `
   <div class="footer">
-    <p>© ${new Date().getFullYear()} Samvedhadigital. All rights reserved.</p>
+    <p>©️ ${new Date().getFullYear()} Samvedhadigital. All rights reserved.</p>
     <p>Address: [Your Company Address]</p>
   </div>
 </div>
