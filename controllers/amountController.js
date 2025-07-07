@@ -26,7 +26,7 @@ exports.getCurrentAmount = async (req, res) => {
 exports.updateAmount = async (req, res) => {
   try {
     const { amount } = req.body;
-    const { email } = req.admin || {}; 
+    const { email } = req.admin || {};
 
     if (!amount || isNaN(amount) || amount <= 0) {
       return res.status(400).json({
@@ -35,19 +35,32 @@ exports.updateAmount = async (req, res) => {
       });
     }
 
-    const updatedAmount = await Amount.findByIdAndUpdate(
-      FIXED_AMOUNT_ID,
-      {
-        _id: FIXED_AMOUNT_ID,
+    // Find the most recent amount configuration
+    const existingAmount = await Amount.findOne().sort({ updatedAt: -1 });
+
+    let updatedAmount;
+    
+    if (existingAmount) {
+      // Update the existing amount
+      updatedAmount = await Amount.findByIdAndUpdate(
+        existingAmount._id,
+        {
+          amount: Number(amount),
+          updatedBy: email,
+          updatedAt: new Date()
+        },
+        { new: true }
+      );
+    } else {
+      // Create new amount configuration
+      updatedAmount = await Amount.create({
         amount: Number(amount),
+        createdBy: email,
         updatedBy: email,
+        createdAt: new Date(),
         updatedAt: new Date()
-      },
-      {
-        new: true,
-        upsert: true // creates if not exists
-      }
-    );
+      });
+    }
 
     res.status(200).json({
       success: true,

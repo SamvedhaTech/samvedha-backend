@@ -16,7 +16,8 @@ const sendInteractiveEmail = async ({
   paymentMethod,
   ticketNumber,
   type,
-  paymentId
+  paymentId,
+  receiptUrl
 }) => {
   let subject, html;
 
@@ -184,8 +185,7 @@ const getPaymentSuccessTemplate = (name, amount, paymentMethod, ticketNumber, pa
           </table>
         </div>
         
-        <a href="#" class="button">Download Receipt</a>
-        
+        ${receiptUrl ? `<a href="${receiptUrl}" class="button" target="_blank">Download Receipt</a>` : ''}
         <p>Your ticket is now confirmed. Please present this ticket number at the venue.</p>
         
         ${getSupportInfo()}

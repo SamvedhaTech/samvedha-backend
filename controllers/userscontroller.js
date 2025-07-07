@@ -5,6 +5,7 @@ const PDFDocument = require('pdfkit');
 const { sendInteractiveEmail } = require('../utils/sendEmail');
 require('pdfkit-table');
 const Amount = require('../models/AmountModel');
+const generateReceiptPDF = require('../utils/generateReceipt');
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -12,18 +13,19 @@ const razorpay = new Razorpay({
 });
 
 
+
 exports.createUser = async (req, res) => {
   try {
     const {
       name, email, phone,
       currency = 'INR',
-      paymentMethod, paymentStatus = 'pending',
+      paymentMethod, paymentStatus = paymentMethod === 'cash' ? 'completed' : 'pending',
     } = req.body;
 
-    if (!name || !email || !phone || !paymentMethod) {
+    if (!name || !phone || !paymentMethod) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: name, email, phone, or payment method.',
+        message: 'Missing required fields: name, phone, or payment method.',
       });
     }
 
@@ -37,16 +39,16 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = email?.toLowerCase();
     const normalizedPhone = phone.trim();
 
     try {
       const [existingEmailUser, existingPhoneUser] = await Promise.all([
-        User.findOne({ email: normalizedEmail }).lean(),
+        email ? User.findOne({ email: normalizedEmail }).lean() : null,
         User.findOne({ phone: normalizedPhone }).lean(),
       ]);
 
-      if (existingEmailUser) {
+      if (existingEmailUser && email) {
         return res.status(400).json({
           success: false,
           message: 'A user with this email already exists.',
@@ -60,27 +62,22 @@ exports.createUser = async (req, res) => {
         });
       }
 
-      // Generate ticket number
-      const ticketNumber = `TKT-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-      const user = new User({
+      const ticket = new User({
         name,
         email: normalizedEmail,
         phone: normalizedPhone,
         amount,
         paymentMethod,
         paymentStatus,
-        ticketNumber,
       });
 
-      await user.save();
-      console.log('amount--->',amount);
-      
+      await ticket.save();
+      const receiptUrl = await generateReceiptPDF(ticket);
 
       if (paymentMethod === 'razorpay') {
         try {
           const amountInPaise = Math.round(amount * 100);
-          
+
           if (isNaN(amountInPaise) || amountInPaise <= 0) {
             throw new Error('Invalid amount for Razorpay payment');
           }
@@ -88,25 +85,25 @@ exports.createUser = async (req, res) => {
           const options = {
             amount: amountInPaise,
             currency,
-            receipt: `receipt_user_${user._id}`,
+            receipt: `receipt_${ticket.ticketNumber}`,
             payment_capture: 1,
           };
 
           console.log('Creating Razorpay order with options:', options);
 
           const razorpayOrder = await razorpay.orders.create(options);
-          
+
           if (!razorpayOrder || !razorpayOrder.id) {
             throw new Error('Failed to create Razorpay order');
           }
 
-          user.razorpayOrderId = razorpayOrder.id;
-          await user.save();
+          ticket.razorpayOrderId = razorpayOrder.id;
+          await ticket.save();
 
           return res.status(201).json({
             success: true,
-            message: 'User created and Razorpay order generated.',
-            user: user.toObject(),
+            message: 'Ticket created and Razorpay order generated.',
+            ticket: ticket.toObject(),
             razorpayOrder: {
               id: razorpayOrder.id,
               amount: razorpayOrder.amount,
@@ -115,196 +112,259 @@ exports.createUser = async (req, res) => {
           });
         } catch (razorpayError) {
           console.error('Razorpay order creation error:', razorpayError);
-          
-          // Update user with failed payment status
-          user.paymentStatus = 'failed';
-          user.paymentHistory.push({
+
+          ticket.paymentStatus = 'failed';
+          ticket.paymentHistory.push({
+            ticketNumber: ticket.ticketNumber,
             paymentId: `failed-${Date.now()}`,
             amount,
             currency,
             status: 'failed',
             method: 'razorpay',
             error: razorpayError.message,
-            createdAt: new Date(),
           });
-          await user.save();
+          await ticket.save();
 
           await sendInteractiveEmail({
-            email: user.email,
-            name: user.name,
+            email: ticket.email,
+            name: ticket.name,
             amount,
             paymentMethod,
-            ticketNumber,
+            ticketNumber: ticket.ticketNumber,
+            receiptUrl,
             type: 'payment-failed'
           });
 
           return res.status(500).json({
             success: false,
-            message: 'User created but failed to create Razorpay order.',
+            message: 'Ticket created but failed to create Razorpay order.',
             error: razorpayError.message,
           });
         }
       }
 
-      // Offline Payment
-      user.paymentHistory.push({
-        paymentId: `offline-${Date.now()}`,
+      // For cash payments
+      ticket.paymentHistory.push({
+        ticketNumber: ticket.ticketNumber,
+        paymentId: `cash-${Date.now()}`,
         amount,
         currency,
-        status: paymentStatus,
-        method: paymentMethod,
-        createdAt: new Date(),
+        status: 'completed',
+        method: 'cash',
       });
 
-      user.paymentStatus = paymentStatus;
-      user.paidAt = new Date();
-      await user.save();
+      await ticket.save();
 
-      // Send payment confirmation email
       await sendInteractiveEmail({
-        email: user.email,
-        name: user.name,
+        email: ticket.email,
+        name: ticket.name,
         amount,
         paymentMethod,
-        ticketNumber,
+        ticketNumber: ticket.ticketNumber,
+        receiptUrl,
         type: 'payment-confirmation'
       });
 
       return res.status(201).json({
         success: true,
-        message: 'User created with offline payment.',
-        user: user.toObject(),
+        message: 'Ticket created with cash payment.',
+        ticket: ticket.toObject(),
       });
 
     } catch (error) {
-      console.error('User creation error:', error);
+      console.error('Ticket creation error:', error);
       res.status(500).json({
         success: false,
-        message: 'Error creating user',
+        message: 'Error creating ticket',
         error: error.message,
       });
     }
   } catch (error) {
-    console.error('User creation error:', error);
+    console.error('Ticket creation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error creating user',
+      message: 'Error creating ticket',
       error: error.message,
     });
   }
 };
+
 
 exports.createUserbyadmin = async (req, res) => {
   try {
     const {
       name, email, phone,
       currency = 'INR',
-      paymentMethod,
-      paymentStatus
+      paymentMethod, paymentStatus = paymentMethod === 'cash' ? 'completed' : 'pending',
     } = req.body;
 
-    if (!name || !email || !phone || !paymentMethod) {
+    if (!name || !phone || !paymentMethod) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: name, email, phone, or payment method.',
+        message: 'Missing required fields: name, phone, or payment method.',
       });
     }
 
-    // Get the current amount from database
+    // Fetch latest amount from Amount model
     const amountConfig = await Amount.findOne().sort({ updatedAt: -1 });
-    const amount = amountConfig ? amountConfig.amount :0; 
+    const amount = amountConfig ? amountConfig.amount : null;
+    if (!amount) {
+      return res.status(500).json({
+        success: false,
+        message: 'No payment amount configured. Please set an amount in the admin panel.',
+      });
+    }
 
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = email?.toLowerCase();
     const normalizedPhone = phone.trim();
 
-    const existingEmailUser = await User.findOne({ email: normalizedEmail });
-    if (existingEmailUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'A user with this email already exists.',
+    try {
+      const [existingEmailUser, existingPhoneUser] = await Promise.all([
+        email ? User.findOne({ email: normalizedEmail }).lean() : null,
+        User.findOne({ phone: normalizedPhone }).lean(),
+      ]);
+
+      if (existingEmailUser && email) {
+        return res.status(400).json({
+          success: false,
+          message: 'A user with this email already exists.',
+        });
+      }
+
+      if (existingPhoneUser) {
+        return res.status(400).json({
+          success: false,
+          message: 'A user with this phone number already exists.',
+        });
+      }
+
+      const ticket = new User({
+        name,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        amount,
+        paymentMethod,
+        paymentStatus,
       });
-    }
 
-    const existingPhoneUser = await User.findOne({ phone: normalizedPhone });
-    if (existingPhoneUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'A user with this phone number already exists.',
-      });
-    }
+      await ticket.save();
+      const receiptUrl = await generateReceiptPDF(ticket);
 
-    // Generate ticket number
-    const ticketNumber = `TKT-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      if (paymentMethod === 'razorpay') {
+        try {
+          const amountInPaise = Math.round(amount * 100);
 
-    const user = new User({
-      name,
-      email: normalizedEmail,
-      phone: normalizedPhone,
-      amount,
-      paymentMethod,
-      paymentStatus,
-      ticketNumber,
-    });
+          if (isNaN(amountInPaise) || amountInPaise <= 0) {
+            throw new Error('Invalid amount for Razorpay payment');
+          }
 
-    await user.save();
+          const options = {
+            amount: amountInPaise,
+            currency,
+            receipt: `receipt_${ticket.ticketNumber}`,
+            payment_capture: 1,
+          };
 
-    if (paymentMethod === 'razorpay') {
-      const options = {
-        amount: Math.round(amount * 100),
+          console.log('Creating Razorpay order with options:', options);
+
+          const razorpayOrder = await razorpay.orders.create(options);
+
+          if (!razorpayOrder || !razorpayOrder.id) {
+            throw new Error('Failed to create Razorpay order');
+          }
+
+          ticket.razorpayOrderId = razorpayOrder.id;
+          await ticket.save();
+
+          return res.status(201).json({
+            success: true,
+            message: 'Ticket created and Razorpay order generated.',
+            ticket: ticket.toObject(),
+            razorpayOrder: {
+              id: razorpayOrder.id,
+              amount: razorpayOrder.amount,
+              currency: razorpayOrder.currency,
+            },
+          });
+        } catch (razorpayError) {
+          console.error('Razorpay order creation error:', razorpayError);
+
+          ticket.paymentStatus = 'failed';
+          ticket.paymentHistory.push({
+            ticketNumber: ticket.ticketNumber,
+            paymentId: `failed-${Date.now()}`,
+            amount,
+            currency,
+            status: 'failed',
+            method: 'razorpay',
+            error: razorpayError.message,
+          });
+          await ticket.save();
+
+          await sendInteractiveEmail({
+            email: ticket.email,
+            name: ticket.name,
+            amount,
+            paymentMethod,
+            ticketNumber: ticket.ticketNumber,
+            receiptUrl,
+            type: 'payment-failed'
+          });
+
+          return res.status(500).json({
+            success: false,
+            message: 'Ticket created but failed to create Razorpay order.',
+            error: razorpayError.message,
+          });
+        }
+      }
+
+      // For cash payments
+      ticket.paymentHistory.push({
+        ticketNumber: ticket.ticketNumber,
+        paymentId: `cash-${Date.now()}`,
+        amount,
         currency,
-        receipt: `user_${user._id}`,
-        payment_capture: 1,
-      };
+        status: 'completed',
+        method: 'cash',
+      });
 
-      const razorpayOrder = await razorpay.orders.create(options);
-      user.razorpayOrderId = razorpayOrder.id;
-      await user.save();
+      await ticket.save();
+
+      await sendInteractiveEmail({
+        email: ticket.email,
+        name: ticket.name,
+        amount,
+        paymentMethod,
+        ticketNumber: ticket.ticketNumber,
+        receiptUrl,
+        type: 'payment-confirmation'
+      });
 
       return res.status(201).json({
         success: true,
-        message: 'User created with Razorpay payment order.',
-        user: user.toObject(),
-        razorpayOrder,
+        message: 'Ticket created with cash payment.',
+        ticket: ticket.toObject(),
+      });
+
+    } catch (error) {
+      console.error('Ticket creation error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error creating ticket',
+        error: error.message,
       });
     }
-
-    user.paymentHistory.push({
-      paymentId: `offline-${Date.now()}`,
-      amount,
-      currency,
-      status: paymentStatus,
-      method: paymentMethod,
-      createdAt: new Date(),
-    });
-
-    user.paymentStatus = paymentStatus;
-    user.paidAt = new Date();
-    await user.save();
-
-    await sendInteractiveEmail({
-      email: user.email,
-      name: user.name,
-      amount,
-      paymentMethod,
-      ticketNumber,
-      type: 'payment-confirmation'
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: 'User created with offline payment.',
-      user: user.toObject(),
-    });
-
   } catch (error) {
-    console.error('User creation error:', error);
+    console.error('Ticket creation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error creating user',
+      message: 'Error creating ticket',
       error: error.message,
     });
   }
 };
+
 
 exports.verifyPayment = async (req, res) => {
   try {

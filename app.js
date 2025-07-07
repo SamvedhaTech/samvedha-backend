@@ -1,5 +1,6 @@
 // Load environment variables
 require('dotenv').config();
+const path = require('path');
 
 const express = require('express');
 const cors = require("cors");
@@ -10,7 +11,9 @@ const userRoute = require('./routes/authRoute');
 const ticketroute = require('./routes/usersroute');
 const amountRoute = require('./routes/amountRoute');
 
-// Enable CORS middleware with more specific configuration
+// In server.js or app.js
+app.use('/receipts', express.static(path.join(__dirname, 'public', 'receipts')));
+
 app.use(cors({
   origin: "*", // Allow all origins — change to specific domain in production
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
