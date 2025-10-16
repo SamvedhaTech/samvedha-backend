@@ -72,7 +72,7 @@ exports.createUser = async (req, res) => {
       });
 
       await ticket.save();
-      const receiptUrl = await generateReceiptPDF(ticket);
+      const { publicURL, receiptPath } = await generateReceiptPDF(ticket); // Get both URL and path
 
       if (paymentMethod === 'razorpay') {
         try {
@@ -131,8 +131,9 @@ exports.createUser = async (req, res) => {
             amount,
             paymentMethod,
             ticketNumber: ticket.ticketNumber,
-            receiptUrl,
-            type: 'payment-failed'
+            receiptUrl: publicURL,
+            receiptPath, // Pass the file path for attachment
+            type: 'payment-failed',
           });
 
           return res.status(500).json({
@@ -161,8 +162,9 @@ exports.createUser = async (req, res) => {
         amount,
         paymentMethod,
         ticketNumber: ticket.ticketNumber,
-        receiptUrl,
-        type: 'payment-confirmation'
+        receiptUrl: publicURL,
+        receiptPath, // Pass the file path for attachment
+        type: 'payment-confirmation',
       });
 
       return res.status(201).json({

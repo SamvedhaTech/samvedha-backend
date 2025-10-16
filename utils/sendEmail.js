@@ -1,11 +1,12 @@
-// utils/emailTemplates.js
+// utils/sendEmail.js
 const nodemailer = require('nodemailer');
+const fs = require('fs').promises; // For async file deletion
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD
+    pass: process.env.EMAIL_PASSWORD,
   },
 });
 
@@ -17,26 +18,27 @@ const sendInteractiveEmail = async ({
   ticketNumber,
   type,
   paymentId,
-  receiptUrl
+  receiptUrl,
+  receiptPath, // For PDF attachment
 }) => {
   let subject, html;
 
   const formattedDate = new Date().toLocaleDateString('en-IN', {
     day: 'numeric',
     month: 'long',
-    year: 'numeric'
+    year: 'numeric',
   });
 
   const formattedTime = new Date().toLocaleTimeString('en-IN', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
   });
 
   const paymentMethodMap = {
-    'razorpay': 'Razorpay',
-    'cash': 'Cash',
-    'bank_transfer': 'Bank Transfer',
-    'card': 'Credit/Debit Card'
+    razorpay: 'Razorpay',
+    cash: 'Cash',
+    bank_transfer: 'Bank Transfer',
+    card: 'Credit/Debit Card',
   };
 
   const paymentMethodText = paymentMethodMap[paymentMethod] || paymentMethod;
@@ -44,19 +46,48 @@ const sendInteractiveEmail = async ({
   switch (type) {
     case 'payment-initiated':
       subject = `Payment Initiated - Your Ticket #${ticketNumber}`;
-      html = getPaymentInitiatedTemplate(name, amount, paymentMethodText, ticketNumber, formattedDate);
+      html = getPaymentInitiatedTemplate(
+        name,
+        amount,
+        paymentMethodText,
+        ticketNumber,
+        formattedDate
+      );
       break;
     case 'payment-success':
       subject = `Payment Successful - Your Ticket #${ticketNumber}`;
-      html = getPaymentSuccessTemplate(name, amount, paymentMethodText, ticketNumber, paymentId, formattedDate, formattedTime,receiptUrl);
+      html = getPaymentSuccessTemplate(
+        name,
+        amount,
+        paymentMethodText,
+        ticketNumber,
+        paymentId,
+        formattedDate,
+        formattedTime,
+        receiptUrl
+      );
       break;
     case 'payment-confirmation':
       subject = `Payment Confirmed - Your Ticket #${ticketNumber}`;
-      html = getPaymentConfirmationTemplate(name, amount, paymentMethodText, ticketNumber, formattedDate, formattedTime);
+      html = getPaymentConfirmationTemplate(
+        name,
+        amount,
+        paymentMethodText,
+        ticketNumber,
+        formattedDate,
+        formattedTime,
+        receiptUrl // Added for consistency
+      );
       break;
     case 'payment-failed':
       subject = `Payment Failed - Your Ticket #${ticketNumber}`;
-      html = getPaymentFailedTemplate(name, amount, ticketNumber, formattedDate);
+      html = getPaymentFailedTemplate(
+        name,
+        amount,
+        ticketNumber,
+        formattedDate,
+        receiptUrl // Added for consistency
+      );
       break;
     default:
       subject = `Payment Update - Your Ticket #${ticketNumber}`;
@@ -64,23 +95,56 @@ const sendInteractiveEmail = async ({
   }
 
   const mailOptions = {
-    from: `"Samvedhadigital" <${process.env.EMAIL_USER}>`,
+    from: `"Samvedha Digital" <${process.env.EMAIL_USER}>`,
     to: email,
     subject,
     html,
+    attachments: receiptPath
+      ? [
+          {
+            filename: `receipt_${ticketNumber}.pdf`,
+            path: receiptPath,
+          },
+        ]
+      : [],
   };
 
   try {
     await transporter.sendMail(mailOptions);
     console.log(`Email sent to ${email} for ${type}`);
+
+    // Delete the PDF file if it exists
+    if (receiptPath) {
+      try {
+        await fs.unlink(receiptPath);
+        console.log(`Deleted receipt file: ${receiptPath}`);
+      } catch (deleteError) {
+        console.error(`Failed to delete receipt file ${receiptPath}:`, deleteError);
+      }
+    }
   } catch (error) {
     console.error(`Error sending email to ${email}:`, error);
+    // Attempt to delete the file even if email fails
+    if (receiptPath) {
+      try {
+        await fs.unlink(receiptPath);
+        console.log(`Deleted receipt file after email failure: ${receiptPath}`);
+      } catch (deleteError) {
+        console.error(`Failed to delete receipt file ${receiptPath}:`, deleteError);
+      }
+    }
     throw error;
   }
 };
 
 // Template generators
-const getPaymentInitiatedTemplate = (name, amount, paymentMethod, ticketNumber, date) => {
+const getPaymentInitiatedTemplate = (
+  name,
+  amount,
+  paymentMethod,
+  ticketNumber,
+  date
+) => {
   return `
     <!DOCTYPE html>
     <html>
@@ -131,7 +195,16 @@ const getPaymentInitiatedTemplate = (name, amount, paymentMethod, ticketNumber, 
   `;
 };
 
-const getPaymentSuccessTemplate = (name, amount, paymentMethod, ticketNumber, paymentId, date, time,receiptUrl) => {
+const getPaymentSuccessTemplate = (
+  name,
+  amount,
+  paymentMethod,
+  ticketNumber,
+  paymentId,
+  date,
+  time,
+  receiptUrl
+) => {
   return `
     <!DOCTYPE html>
     <html>
@@ -185,7 +258,11 @@ const getPaymentSuccessTemplate = (name, amount, paymentMethod, ticketNumber, pa
           </table>
         </div>
         
-        ${receiptUrl ? `<a href="${receiptUrl}" class="button" target="_blank">Download Receipt</a>` : ''}
+        ${
+          receiptUrl
+            ? `<a href="${receiptUrl}" class="button" target="_blank">Download Receipt</a>`
+            : ''
+        }
         <p>Your ticket is now confirmed. Please present this ticket number at the venue.</p>
         
         ${getSupportInfo()}
@@ -197,7 +274,15 @@ const getPaymentSuccessTemplate = (name, amount, paymentMethod, ticketNumber, pa
   `;
 };
 
-const getPaymentConfirmationTemplate = (name, amount, paymentMethod, ticketNumber, date, time) => {
+const getPaymentConfirmationTemplate = (
+  name,
+  amount,
+  paymentMethod,
+  ticketNumber,
+  date,
+  time,
+  receiptUrl
+) => {
   return `
     <!DOCTYPE html>
     <html>
@@ -247,7 +332,11 @@ const getPaymentConfirmationTemplate = (name, amount, paymentMethod, ticketNumbe
           </table>
         </div>
         
-        <a href="#" class="button">View Ticket Details</a>
+        ${
+          receiptUrl
+            ? `<a href="${receiptUrl}" class="button" target="_blank">Download Receipt</a>`
+            : '<a href="#" class="button">View Ticket Details</a>'
+        }
         
         <p>Your ticket is now confirmed. Please keep this email for your records.</p>
         
@@ -260,7 +349,7 @@ const getPaymentConfirmationTemplate = (name, amount, paymentMethod, ticketNumbe
   `;
 };
 
-const getPaymentFailedTemplate = (name, amount, ticketNumber, date) => {
+const getPaymentFailedTemplate = (name, amount, ticketNumber, date, receiptUrl) => {
   return `
     <!DOCTYPE html>
     <html>
@@ -303,8 +392,43 @@ const getPaymentFailedTemplate = (name, amount, ticketNumber, date) => {
         </div>
         
         <a href="#" class="button">Retry Payment</a>
+        ${
+          receiptUrl
+            ? `<p>View your payment attempt details: <a href="${receiptUrl}" target="_blank">Receipt</a></p>`
+            : ''
+        }
         
         <p>Please try again or contact our support team if you need assistance.</p>
+        
+        ${getSupportInfo()}
+      </div>
+      
+      ${getEmailFooter()}
+    </body>
+    </html>
+  `;
+};
+
+const getDefaultTemplate = (name, amount, ticketNumber) => {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Payment Update</title>
+      ${getCommonStyles()}
+    </head>
+    <body>
+      ${getEmailHeader('Payment Update')}
+      
+      <div class="content">
+        <p>Dear ${name},</p>
+        <p>We have an update regarding your payment of ₹${amount} for ticket #${ticketNumber}.</p>
+        
+        ${getTicketCard(ticketNumber)}
+        
+        <p>Please contact our support team for more details.</p>
         
         ${getSupportInfo()}
       </div>
@@ -428,12 +552,10 @@ const getSupportInfo = () => `
 
 const getEmailFooter = () => `
   <div class="footer">
-    <p>©️ ${new Date().getFullYear()} Samvedhadigital. All rights reserved.</p>
+    <p>© ${new Date().getFullYear()} Samvedhadigital. All rights reserved.</p>
     <p>Address: [Your Company Address]</p>
   </div>
 </div>
 `;
 
 module.exports = { sendInteractiveEmail };
-
-
