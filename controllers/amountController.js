@@ -1,4 +1,4 @@
-const Amount = require('../models/AmountModel');
+const Amount = require("../models/AmountModel");
 
 exports.getCurrentAmount = async (req, res) => {
   try {
@@ -6,19 +6,19 @@ exports.getCurrentAmount = async (req, res) => {
     if (!amountConfig) {
       return res.status(404).json({
         success: false,
-        message: 'No amount configuration found'
+        message: "No amount configuration found",
       });
     }
     res.status(200).json({
       success: true,
-      message: 'Amount fetched successfully',
-      amount: amountConfig.amount
+      message: "Amount fetched successfully",
+      amount: amountConfig.amount,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching amount',
-      error: error.message
+      message: "Error fetching amount",
+      error: error.message,
     });
   }
 };
@@ -26,28 +26,25 @@ exports.getCurrentAmount = async (req, res) => {
 exports.updateAmount = async (req, res) => {
   try {
     const { amount } = req.body;
-    const { email } = req.admin || {};
 
     if (!amount || isNaN(amount) || amount <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide a valid amount greater than 0'
+        message: "Please provide a valid amount greater than 0",
       });
     }
 
-    // Find the most recent amount configuration
     const existingAmount = await Amount.findOne().sort({ updatedAt: -1 });
 
     let updatedAmount;
-    
+
     if (existingAmount) {
       // Update the existing amount
       updatedAmount = await Amount.findByIdAndUpdate(
         existingAmount._id,
         {
           amount: Number(amount),
-          updatedBy: email,
-          updatedAt: new Date()
+          updatedAt: new Date(),
         },
         { new: true }
       );
@@ -55,26 +52,24 @@ exports.updateAmount = async (req, res) => {
       // Create new amount configuration
       updatedAmount = await Amount.create({
         amount: Number(amount),
-        createdBy: email,
-        updatedBy: email,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Amount updated successfully',
-      amount: updatedAmount.amount
+      message: "Amount updated successfully",
+      amount: updatedAmount.amount,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error updating amount',
-      error: error.message
+      message: "Error updating amount",
+      error: error.message,
     });
   }
 };
+
 
 exports.getAmountHistory = async (req, res) => {
   try {
@@ -82,27 +77,24 @@ exports.getAmountHistory = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [history, total] = await Promise.all([
-      Amount.find()
-        .sort({ updatedAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Amount.countDocuments()
+      Amount.find().sort({ updatedAt: -1 }).skip(skip).limit(parseInt(limit)),
+      Amount.countDocuments(),
     ]);
 
     res.status(200).json({
       success: true,
-      message: 'Amount history fetched successfully',
+      message: "Amount history fetched successfully",
       total,
       page: parseInt(page),
       limit: parseInt(limit),
       totalPages: Math.ceil(total / parseInt(limit)),
-      history
+      history,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching amount history',
-      error: error.message
+      message: "Error fetching amount history",
+      error: error.message,
     });
   }
-}; 
+};
